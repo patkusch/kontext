@@ -1,0 +1,49 @@
+{
+  "name": "kontext",
+  "version": "0.1.0",
+  "description": "Give your markdown a lifecycle. Prove which docs are stale with git, pack fresh context for agents, and hand off state between sessions.",
+  "type": "module",
+  "bin": {
+    "kontext": "./dist/cli.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js",
+    "./mcp": "./dist/mcp/server.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch",
+    "test": "node --test test/*.test.js",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "context",
+    "markdown",
+    "documentation",
+    "staleness",
+    "ai-agents",
+    "mcp",
+    "claude",
+    "llm",
+    "context-engineering"
+  ],
+  "author": "patkusch",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  }
+}
