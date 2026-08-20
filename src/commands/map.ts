@@ -218,7 +218,11 @@ async function run(argv: string[]): Promise<number> {
     .map((f) => `${paint(f, String(counts[f]))} ${f}`);
 
   for (const line of joinWrapped(
-    [`${c.bold(String(reports.length))} docs`, `~${humanTokens(totalTokens)} tokens`, `${unverifiedPct}% unverified`],
+    [
+      `${c.bold(String(reports.length))} doc${reports.length === 1 ? '' : 's'}`,
+      `~${humanTokens(totalTokens)} tokens`,
+      `${unverifiedPct}% unverified`,
+    ],
     SEP,
     width,
   )) {

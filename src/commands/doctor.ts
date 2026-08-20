@@ -311,11 +311,16 @@ async function run(argv: string[]): Promise<number> {
   if (docs.length > 0) {
     const provable = withDescribes.length;
     const note = `${unprovable} doc(s) kontext cannot judge`;
-    const fixed = 2 + displayWidth('provable') + 1 + 1 + displayWidth(`${pct(provable, docs.length)}%`) + 2;
-    const barWidth = Math.max(6, Math.min(30, width - fixed - displayWidth(note)));
+    const pctText = `${pct(provable, docs.length)}%`;
+    const fixed = 2 + displayWidth('provable') + 1 + 1 + displayWidth(pctText) + 2;
+    const room = width - fixed;
+    // Below a certain width the note cannot share the line with the bar.
+    const inline = room - displayWidth(note) >= 6;
+    const barWidth = Math.max(6, Math.min(30, inline ? room - displayWidth(note) : room));
     out(
-      `  ${c.dim('provable')} ${bar(provable / docs.length, barWidth)} ${pct(provable, docs.length)}%  ${c.dim(note)}`,
+      `  ${c.dim('provable')} ${bar(provable / docs.length, barWidth)} ${pctText}${inline ? `  ${c.dim(note)}` : ''}`,
     );
+    if (!inline) for (const line of wrapText(note, width - 2)) out(c.dim(`  ${line}`));
     out();
   }
 

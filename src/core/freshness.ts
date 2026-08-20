@@ -222,7 +222,7 @@ function cachedDocCommit(root: string, relPath: string, cache: RunCache): GitCom
 }
 
 function cachedFilesCommit(root: string, files: string[], cache: RunCache): GitCommitInfo | null {
-  const key = files.join(' ');
+  const key = files.join('\u0000');
   const hit = cache.filesCommit.get(key);
   if (hit !== undefined) return hit;
   let value: GitCommitInfo | null = null;
@@ -241,7 +241,7 @@ function cachedSince(
   sinceISO: string,
   cache: RunCache,
 ): { count: number; files: string[] } {
-  const key = `${sinceISO}${files.join(' ')}`;
+  const key = `${sinceISO}\u0001${files.join('\u0000')}`;
   const hit = cache.since.get(key);
   if (hit !== undefined) return hit;
   let value: { count: number; files: string[] };
@@ -260,7 +260,7 @@ function cachedGlobs(
   allFiles: string[],
   cache: RunCache,
 ): { matched: string[]; missingGlobs: string[] } {
-  const key = globs.join(' ');
+  const key = globs.join('\u0000');
   const hit = cache.globs.get(key);
   if (hit !== undefined) return hit;
   let value: { matched: string[]; missingGlobs: string[] };
@@ -620,22 +620,6 @@ export function assessAll(
 /* runVerify                                                                   */
 /* -------------------------------------------------------------------------- */
 
-/** Characters that mean the string is a shell program, not a bare argv. */
-const SHELL_METACHARS = /[|&;<>()$`\\"'*?\[\]{}~\n]/;
-
-/**
- * Split a simple command into argv. Returns null when the string needs a real
- * shell (pipes, redirects, globs, substitutions), in which case the caller
- * falls back to `sh -c`.
- */
-function parseCommand(command: string): { file: string; args: string[] } | null {
-  if (SHELL_METACHARS.test(command)) return null;
-  const parts = command.trim().split(/\s+/).filter((p) => p.length > 0);
-  const file = parts[0];
-  if (file === undefined) return null;
-  return { file, args: parts.slice(1) };
-}
-
 function capOutput(text: string): string {
   if (text.length <= MAX_VERIFY_OUTPUT) return text;
   return `${text.slice(0, MAX_VERIFY_OUTPUT)}\n... [output truncated at ${MAX_VERIFY_OUTPUT} bytes]`;
@@ -653,8 +637,8 @@ function capOutput(text: string): string {
  * Implementation note: this uses `spawnSync`, which is `execFileSync` without
  * the throw-on-nonzero-exit behaviour — a failing verify is the *expected* case
  * here, and spawnSync is the only sync variant that hands back stdout and
- * stderr together in that case. `shell: false` is the default; a shell is only
- * introduced (as an explicit `sh -c` argv) when the command genuinely needs one.
+ * stderr together in that case. It runs with `shell: true` because `verify` is
+ * specified as a shell command; see the note at the call site.
  */
 export function runVerify(
   root: string,
@@ -665,20 +649,22 @@ export function runVerify(
   if (typeof command !== 'string' || command.trim().length === 0) return null;
   const trimmed = command.trim();
 
-  const parsed = parseCommand(trimmed);
-  const file = parsed ? parsed.file : '/bin/sh';
-  const args = parsed ? parsed.args : ['-c', trimmed];
-
+  // `verify` is specified as a *shell* command, so run it in a shell — the same
+  // trust model as an npm script, and it only ever runs behind an explicit
+  // `--verify` flag. Exec'ing it directly instead looks fine until someone
+  // writes `exit 7`, `a && b`, or a pipe, and gets a confusing ENOENT for a
+  // command that works perfectly in their terminal. `shell: true` also picks
+  // the right shell per platform rather than hardcoding /bin/sh.
   const started = Date.now();
   try {
-    const result = spawnSync(file, args, {
+    const result = spawnSync(trimmed, {
       cwd: root,
       timeout: Math.max(1, timeoutMs),
       killSignal: 'SIGKILL',
       encoding: 'utf8',
       maxBuffer: 1024 * 1024,
       windowsHide: true,
-      shell: false,
+      shell: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 

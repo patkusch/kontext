@@ -211,7 +211,14 @@ async function run(argv: string[]): Promise<number> {
 
   const totalTokens = reports.reduce((a, r) => a + r.doc.tokenEstimate, 0);
   out();
-  out(banner('kontext check', [`${reports.length} docs`, `~${humanTokens(totalTokens)} tokens`], root, width));
+  out(
+    banner(
+      'kontext check',
+      [`${reports.length} doc${reports.length === 1 ? '' : 's'}`, `~${humanTokens(totalTokens)} tokens`],
+      root,
+      width,
+    ),
+  );
   out();
 
   const grouped = new Map<Freshness, FreshnessReport[]>();

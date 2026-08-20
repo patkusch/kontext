@@ -176,6 +176,10 @@ export const DEFAULT_CONFIG: KontextConfig = {
     '**/build/**',
     '**/vendor/**',
     '**/CHANGELOG.md',
+    // kontext's own output. A generated handoff carries `ttlDays: 7`, so
+    // managing it would expire it a week later and fail the repo's CI for
+    // no reason — the tool must not create work for itself.
+    '**/.kontext/**',
   ],
   warnDriftDays: 14,
   staleDriftDays: 45,
