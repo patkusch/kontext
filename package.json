@@ -4,7 +4,8 @@
   "description": "Give your markdown a lifecycle. Prove which docs are stale with git, pack fresh context for agents, and hand off state between sessions.",
   "type": "module",
   "bin": {
-    "kontext": "./dist/cli.js"
+    "kontext": "./dist/cli.js",
+    "kontext-mcp": "./dist/mcp/server.js"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

@@ -68,35 +68,57 @@ checkable claim.
 
 ## Quickstart
 
+Not on npm yet — install from source (no build dependencies beyond TypeScript):
+
 ```bash
-npx kontext doctor
+git clone https://github.com/patkusch/kontext.git && cd kontext && npm install && npm run build && npm link
 ```
 
-Run it on any repo, right now, with zero setup and zero frontmatter. It'll tell you how
+Then, in any repo you want to look at:
+
+```bash
+kontext doctor
+```
+
+Works on any repo right now, with zero setup and zero frontmatter. It'll tell you how
 bad things actually are.
 
 ```bash
-npx kontext check
+kontext check
 ```
 
 ```
-○ stale       docs/auth.md                                    23 days behind
-  └ 12 commits touched src/auth/** since this doc was last updated
-    (latest: a3f9c21 "rework session refresh", 31 days ago)
+kontext check · 5 docs · ~42 tokens · ~/demo
 
-⊘ orphaned    docs/legacy-queue.md
-  └ describes: workers/queue/** — matches 0 files
+── orphaned (1) ────────────────────────────────────────────────────────────────
+ ⊘  docs/legacy-queue.md    7  1 dead glob
+     · orphaned: `describes` glob workers/queue/** matches zero tracked files
+       — the code this doc describes was deleted, renamed, or moved
 
-◐ drifting    docs/deploy.md                                   9 days behind
-  └ 2 commits touched infra/** since this doc was last updated
+── stale (2) ───────────────────────────────────────────────────────────────────
+ ○  docs/auth.md     10  12 commits · 181d behind · 1 file
+     · stale: 12 commits touched src/auth/** since this doc was last updated
+       (latest: eeefbd7 'auth change 11', 19 days ago); the described code is
+       181 days ahead of the doc (doc: 808f909 'initial: code and docs
+       together', 200 days ago) — past the 45-day stale threshold
+     · files that moved: src/auth/session.ts
 
-·  unverified  docs/philosophy.md
-  └ no `describes` field — staleness cannot be proven either way
+── unverified (1) ──────────────────────────────────────────────────────────────
+ ·  docs/philosophy.md   50
+     · unverified: no `describes` field, so this doc makes no falsifiable
+       claim about source files — staleness can be neither proven nor ruled
+       out. Add `describes: [<globs>]` to make it checkable.
 
-●  fresh       docs/api.md
+── fresh (1) ───────────────────────────────────────────────────────────────────
+ ●  docs/api.md  100  1 file
 
-  1 fresh · 1 drifting · 1 stale · 1 orphaned · 1 unverified
+1 fresh · 1 unverified · 2 stale · 1 orphaned
+● fresh  ◐ drifting  ○ stale  ⊗ expired  ⊘ orphaned  ⇥ superseded  · unverified
+
+check failed: 3 docs in fail set [stale, expired, orphaned]
 ```
+
+*(Real output, not a mockup — that's `kontext check` run against a demo repo.)*
 
 Every verdict cites its evidence. You can check the reasoning and overrule it — a tool
 that says *"trust me, it's stale"* deserves the same fate as the docs it's judging.
@@ -104,8 +126,8 @@ that says *"trust me, it's stale"* deserves the same fate as the docs it's judgi
 ### Adopt it gradually
 
 ```bash
-npx kontext init --dry-run   # propose frontmatter for existing docs, write nothing
-npx kontext init --yes       # prepend it, preserving every body byte-for-byte
+kontext init --dry-run   # propose frontmatter for existing docs, write nothing
+kontext init --yes       # prepend it, preserving every body byte-for-byte
 ```
 
 `init` infers an `id` from the filename, guesses `kind` from structure, and proposes
@@ -115,8 +137,11 @@ and it marks them as guesses.** Narrow them by hand — that's the part that mat
 ### Gate it in CI
 
 ```yaml
-- run: npx kontext check --fail-on stale,orphaned
+- run: kontext check --fail-on stale,orphaned   # needs fetch-depth: 0
 ```
+
+That `fetch-depth: 0` matters: kontext proves staleness from git history, and a shallow
+clone makes every doc look freshly committed.
 
 Now a PR that changes `src/auth/` and not its docs fails the build. Documentation joins
 the set of things that must keep working.
@@ -156,7 +181,7 @@ last month with the wrong port is actively harmful. kontext ranks `decision` and
 ## Packing context for a task
 
 ```bash
-npx kontext pack "refactor session expiry" --budget 8000
+kontext pack "refactor session expiry" --budget 8000
 ```
 
 Ranks by **relevance weighted by freshness**, fills the token budget, truncates on
@@ -179,7 +204,7 @@ surprised you, what you were mid-way through — all of it lived in a conversati
 just ended.
 
 ```bash
-npx kontext handoff --task "session expiry refactor" \
+kontext handoff --task "session expiry refactor" \
   --message "ruled out Redis TTL; see open question on clock skew"
 ```
 
@@ -198,19 +223,21 @@ Instead of an agent slurping every markdown file, it gets a **freshness-aware co
 API** — ranked, budgeted, and tagged with how much each source can be trusted.
 
 ```bash
-claude mcp add kontext -- npx -y kontext mcp
+claude mcp add kontext -- node /absolute/path/to/kontext/dist/mcp/server.js
 ```
 
 <details>
 <summary>Claude Desktop / other MCP clients</summary>
 
+Claude Desktop's working directory isn't your repo, so `KONTEXT_ROOT` is required there:
+
 ```json
 {
   "mcpServers": {
     "kontext": {
-      "command": "npx",
-      "args": ["-y", "kontext", "mcp"],
-      "env": { "KONTEXT_ROOT": "/path/to/your/repo" }
+      "command": "node",
+      "args": ["/absolute/path/to/kontext/dist/mcp/server.js"],
+      "env": { "KONTEXT_ROOT": "/absolute/path/to/your/repo" }
     }
   }
 }
@@ -237,7 +264,7 @@ trustworthy. That's the entire thesis in one API decision.
 Two docs, two different answers, and an agent picks one at random:
 
 ```bash
-npx kontext doctor
+kontext doctor
 ```
 
 ```
@@ -280,7 +307,7 @@ costs you trust in the tool.
 | `kontext pack <task>` | Budgeted context bundle. |
 | `kontext init` | Propose frontmatter for existing docs. |
 | `kontext handoff` | Capture working state for the next session. |
-| `kontext mcp` | Run the MCP server. |
+| `kontext mcp` | Run the MCP server (stdio). |
 
 All commands support `--json`.
 

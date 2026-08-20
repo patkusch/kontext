@@ -146,6 +146,7 @@ export interface FreshnessReport {
   reasons: string[];
   drift?: DriftEvidence;
   verify?: VerifyResult;
+  /** Paths of the docs that declared this one superseded (paths, not ids — actionable). */
   supersededBy?: string[];
 }
 

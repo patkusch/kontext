@@ -1,6 +1,22 @@
+---
+kontext: 1
+id: context-lifecycle-spec
+kind: spec
+describes:
+  - src/types.ts
+owner: patkusch
+tags: [spec, context, lifecycle]
+pin: true
+---
+
 # The Context Lifecycle Spec
 
 **Version 1 · status: draft · implemented by [kontext](https://github.com/patkusch/kontext)**
+
+> This document practises what it specifies. Its frontmatter declares that it
+> describes `src/types.ts` — so if the contract changes and this spec doesn't,
+> `kontext check` fails kontext's own CI. A spec that can go quietly stale is
+> exactly the problem this spec exists to describe.
 
 ---
 
