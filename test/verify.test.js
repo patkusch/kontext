@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -101,4 +101,39 @@ test('source files contain no raw control bytes', async () => {
     return buf.includes(0x00) || buf.includes(0x01);
   });
   assert.deepEqual(offenders, [], `raw control bytes in: ${offenders.join(', ')}`);
+});
+
+test('init refuses to write when the root resolved too wide', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+
+  // A project folder with no .git of its own makes kontext walk up until it
+  // finds one — which can land on the user's entire home directory. Writing
+  // there would rewrite every markdown file they own.
+  for (let i = 0; i < 420; i++) writeFileSync(join(dir, `d${i}.md`), `# Doc ${i}\n`);
+  execFileSync('git', ['add', '-A'], { cwd: dir });
+  execFileSync('git', ['commit', '-q', '-m', 'many docs'], {
+    cwd: dir,
+    env: {
+      ...process.env,
+      GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@e.com',
+      GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@e.com',
+    },
+  });
+
+  const cli = new URL('../dist/cli.js', import.meta.url).pathname;
+  const run = (args) =>
+    spawnSync(process.execPath, [cli, 'init', ...args], { cwd: dir, encoding: 'utf8' });
+
+  const wrote = run(['--yes']);
+  assert.equal(wrote.status, 2, 'a too-wide write must exit 2, not proceed');
+  assert.match(wrote.stderr, /refusing to write/i);
+
+  const before = readFileSync(join(dir, 'd0.md'), 'utf8');
+  assert.equal(before, '# Doc 0\n', 'nothing may be written when the guard trips');
+
+  // Previewing is harmless, so it warns rather than refusing.
+  const preview = run(['--dry-run']);
+  assert.equal(preview.status, 0, 'preview must still work');
+  assert.match(preview.stderr, /wider than you probably meant/i);
 });

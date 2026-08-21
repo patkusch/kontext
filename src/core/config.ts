@@ -11,6 +11,7 @@
  * a warning in the middle of that stream would corrupt it.
  */
 
+import { homedir } from 'node:os';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { DEFAULT_CONFIG, FRESHNESS_SEVERITY } from '../types.js';
@@ -196,4 +197,27 @@ function warn(message: string): void {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Documents above this count in one "repo" almost always means the root
+ * resolved wider than the user intended — a project folder with no `.git` of
+ * its own, so the walk upward kept going.
+ */
+export const WIDE_SCOPE_DOC_COUNT = 400;
+
+/**
+ * True when the resolved root is the user's home directory.
+ *
+ * This happens when a project folder has no `.git` and some ancestor does —
+ * `git init` in $HOME is a surprisingly common accident. Reading is merely
+ * slow; *writing* would rewrite every markdown file the user owns, so any
+ * destructive command must refuse here unless explicitly overridden.
+ */
+export function isHomeDirRoot(root: string): boolean {
+  try {
+    return resolve(root) === resolve(homedir());
+  } catch {
+    return false;
+  }
 }

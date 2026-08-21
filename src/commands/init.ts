@@ -14,7 +14,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { DEFAULT_CONFIG, type DocKind, type DocRecord, type KontextFrontmatter } from '../types.js';
 import { KONTEXT_SPEC_VERSION } from '../types.js';
-import { loadConfig, findRepoRoot } from '../core/config.js';
+import { loadConfig, findRepoRoot, isHomeDirRoot, WIDE_SCOPE_DOC_COUNT } from '../core/config.js';
 import { scanDocs } from '../core/scan.js';
 import { serializeFrontmatter } from '../core/frontmatter.js';
 import { listTrackedFiles } from '../core/git.js';
@@ -24,6 +24,7 @@ import { SEP, banner, c, err, json, out, outWrap, terminalWidth, truncate } from
 const flags: FlagSpecs = {
   'dry-run': { type: 'boolean', description: 'Preview only. Never writes, even with --yes.' },
   yes: { type: 'boolean', alias: 'y', description: 'Actually write the inferred frontmatter and starter config.' },
+  force: { type: 'boolean', description: 'Override the scope safety check. Read what it says first.' },
   json: { type: 'boolean', description: 'Emit the proposals as JSON.' },
 };
 
@@ -341,6 +342,39 @@ async function run(argv: string[]): Promise<number> {
   const root = findRepoRoot(process.cwd());
   const config = loadConfig(root);
   const docs = await scanDocs(root, config);
+
+  // ---- Scope guard -------------------------------------------------------
+  // `init` rewrites files. If the root resolved wider than the user meant --
+  // typically because this folder has no `.git` and an ancestor does -- then
+  // "add frontmatter to every doc" means every markdown file they own. Refuse
+  // loudly rather than being catastrophically obedient.
+  const scopeProblems: string[] = [];
+  if (isHomeDirRoot(root)) {
+    scopeProblems.push(
+      `the root resolved to your home directory (${root}) — this folder has no .git of its own, so kontext walked up until it found one`,
+    );
+  }
+  if (docs.length > WIDE_SCOPE_DOC_COUNT) {
+    scopeProblems.push(
+      `${docs.length} documents is far more than one project usually holds — the root is probably wider than you meant`,
+    );
+  }
+  if (scopeProblems.length > 0 && !write) {
+    // Previewing is harmless, so let it through — but say plainly that the
+    // scope looks wrong, before the user reads 3,000 proposals as normal.
+    err(c.yellow(`warning: this root looks wider than you probably meant — ${root}`));
+    for (const p of scopeProblems) err(c.dim(`  · ${p}`));
+    err('');
+  } else if (scopeProblems.length > 0 && !getBool(args, 'force')) {
+    err(c.red(`refusing to write: ${root}`));
+    for (const p of scopeProblems) err(c.dim(`  · ${p}`));
+    err('');
+    err('this would touch every markdown file under that root. options:');
+    err(c.dim('  · run `git init` in the project folder you actually meant, then retry'));
+    err(c.dim('  · cd into a folder that has its own .git'));
+    err(c.dim('  · pass --force if this really is what you want'));
+    return 2;
+  }
 
   let tracked: string[] = [];
   try {
