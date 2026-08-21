@@ -137,3 +137,32 @@ test('init refuses to write when the root resolved too wide', async (t) => {
   assert.equal(preview.status, 0, 'preview must still work');
   assert.match(preview.stderr, /wider than you probably meant/i);
 });
+
+test('vendored dependency docs are not counted as the user\'s own', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+
+  // Installed libraries ship their own READMEs and LICENSEs. They are real
+  // documents, just not the user's: they cannot be edited, they are deleted
+  // and re-fetched on every install, and nobody needs to know whether a
+  // third-party licence file has gone stale. Counting them made a real
+  // project report 13 docs when only 1 was actually the user's.
+  writeFileSync(join(dir, 'README.md'), '# My actual project\n');
+  for (const vendor of [
+    '.venv/lib/python3.14/site-packages/idna',
+    'venv/lib/site-packages/requests',
+    'node_modules/left-pad',
+    '__pycache__',
+    '.next/server',
+    'Pods/Alamofire',
+    'coverage/lcov-report',
+  ]) {
+    mkdirSync(join(dir, vendor), { recursive: true });
+    writeFileSync(join(dir, vendor, 'LICENSE.md'), '# MIT License\n\nCopyright...\n');
+    writeFileSync(join(dir, vendor, 'README.md'), '# Some dependency\n');
+  }
+
+  const docs = await scanDocs(dir, DEFAULT_CONFIG);
+  const paths = docs.map((d) => d.path);
+  assert.deepEqual(paths, ['README.md'], `only the user's own doc should count, got: ${paths.join(', ')}`);
+});

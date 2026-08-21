@@ -176,6 +176,27 @@ export const DEFAULT_CONFIG: KontextConfig = {
     '**/build/**',
     '**/vendor/**',
     '**/CHANGELOG.md',
+    // Python. Omitting these made a real project report 13 docs when only 1
+    // was the user's — the other 12 were LICENSE files inside a virtualenv.
+    '**/.venv/**',
+    '**/venv/**',
+    '**/site-packages/**',
+    '**/__pycache__/**',
+    '**/.tox/**',
+    '**/*.egg-info/**',
+    // JS frameworks and caches beyond node_modules
+    '**/.next/**',
+    '**/.nuxt/**',
+    '**/.svelte-kit/**',
+    '**/.turbo/**',
+    '**/bower_components/**',
+    // Other ecosystems
+    '**/Pods/**',
+    '**/.terraform/**',
+    '**/.gradle/**',
+    // Generated output
+    '**/coverage/**',
+    '**/.cache/**',
     // kontext's own output. A generated handoff carries `ttlDays: 7`, so
     // managing it would expire it a week later and fail the repo's CI for
     // no reason — the tool must not create work for itself.
