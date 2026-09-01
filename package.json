@@ -1,5 +1,5 @@
 {
-  "name": "kontext",
+  "name": "@patkusch/kontext",
   "version": "0.1.0",
   "description": "Give your markdown a lifecycle. Prove which docs are stale with git, pack fresh context for agents, and hand off state between sessions.",
   "type": "module",
@@ -16,13 +16,14 @@
   "files": [
     "dist",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch",
     "test": "node --test test/*.test.js",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build && npm test"
   },
   "keywords": [
     "context",
@@ -37,6 +38,17 @@
   ],
   "author": "patkusch",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/patkusch/kontext.git"
+  },
+  "bugs": {
+    "url": "https://github.com/patkusch/kontext/issues"
+  },
+  "homepage": "https://github.com/patkusch/kontext#readme",
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "node": ">=20"
   },

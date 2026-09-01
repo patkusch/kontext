@@ -10,9 +10,18 @@
 </p>
 
 <p align="center">
+  <a href="https://www.npmjs.com/package/@patkusch/kontext"><img src="https://img.shields.io/npm/v/@patkusch/kontext?style=flat-square&color=cb3837&label=npm" alt="npm"></a>
+  <a href="https://github.com/patkusch/kontext/actions/workflows/ci.yml"><img src="https://github.com/patkusch/kontext/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <img src="https://img.shields.io/badge/tests-34-brightgreen?style=flat-square" alt="34 tests">
+  <img src="https://img.shields.io/badge/runtime%20deps-1-blue?style=flat-square" alt="One runtime dependency">
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/licence-MIT-green?style=flat-square" alt="MIT"></a>
+</p>
+
+<p align="center">
   <a href="#quickstart">Quickstart</a> ·
   <a href="#how-it-works">How it works</a> ·
   <a href="#for-ai-agents-mcp">For AI agents</a> ·
+  <a href="CHANGELOG.md">Changelog</a> ·
   <a href="docs/SPEC.md">The spec</a>
 </p>
 
@@ -68,11 +77,24 @@ checkable claim.
 
 ## Quickstart
 
-Not on npm yet — install from source (no build dependencies beyond TypeScript):
+```bash
+npm install -g @patkusch/kontext
+```
+
+Or run it without installing anything:
+
+```bash
+npx @patkusch/kontext doctor
+```
+
+<details>
+<summary>From source instead — no build dependencies beyond TypeScript</summary>
 
 ```bash
 git clone https://github.com/patkusch/kontext.git && cd kontext && npm install && npm run build && npm link
 ```
+
+</details>
 
 Then, in any repo you want to look at:
 
