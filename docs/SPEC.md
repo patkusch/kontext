@@ -296,10 +296,21 @@ a handoff.
 
 Genuinely unresolved, and feedback is welcome:
 
-- **Rename tracking.** `git log --follow` handles single files; glob-level rename
-  detection across a refactor is harder. A doc whose subject moved from `src/auth/` to
-  `src/identity/` currently reads as `orphaned`, which is technically true and
-  practically annoying.
+- **Rename tracking.** Resolved for per-file history: `git log --follow` is deliberately
+  not wired into `src/core/git.ts`, on measured evidence rather than a guess (see
+  `test/git-rename.test.js` and the comment on `lastCommitForPath`). It hard-requires a
+  single pathspec, but every evidence function here takes a path *list* because a
+  `describes` glob routinely resolves to more than one file — that's the common case,
+  not an edge case — so `--follow` could only ever help the minority of docs with a
+  single-file `describes`, and even then its output mixes old and new filenames in a way
+  that would leak a since-renamed path into evidence documented as "currently tracked
+  files." Still open: glob-level rename detection across a refactor, which is a different
+  problem (relocating a doc's *subject*, not counting a file's commits) — a doc whose
+  subject moved from `src/auth/` to `src/identity/` currently reads as `orphaned`, which
+  is technically true and practically annoying. The likeliest fix there is `-M`
+  similarity on a normal, non-`--follow` `git log` across the whole repo (which doesn't
+  share `--follow`'s single-path limit), used to propose an updated `describes` glob —
+  not yet built.
 - **Monorepos.** Should drift be scoped per-package? A commit in `packages/ui` probably
   should not drift a doc describing `packages/api`, but the glob already expresses that.
   Unclear whether anything more is needed.

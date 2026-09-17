@@ -56,10 +56,36 @@ export function isGitRepo(root: string): boolean {
  * The last commit that touched one path, or null when the path has no history
  * (untracked, newly created, or the repo has no commits yet).
  *
- * Rename history is deliberately not followed: `--follow` only accepts a
- * single pathspec, so using it here would make single-path and multi-path
- * results inconsistent — and a doc whose subject was renamed *should* look
- * suspicious rather than silently inheriting the old file's history.
+ * `git log --follow` is not wired in here, and the reasoning is evidence-based,
+ * not a guess (see test/git-rename.test.js, which builds a real renamed-file
+ * repo and checks both sides of this):
+ *
+ *   - Every caller in this file passes an array of paths, because a
+ *     `describes` glob routinely resolves to more than one file — that is
+ *     the common case this module is built around, not an edge case.
+ *     `--follow` hard-fails with "requires exactly one pathspec" the moment
+ *     more than one path is given, so it could only ever apply to the
+ *     minority of docs whose `describes` happens to resolve to a single
+ *     file. Confirmed: `git log --follow -- a b` exits 128.
+ *   - Even in that single-file case, `--follow`'s own output mixes the file's
+ *     old and new names into the same history — useful for a human `git log`,
+ *     but it would leak a path that no longer exists in the working tree
+ *     into `commitsTouchingSince`'s `files` sample, which is documented and
+ *     relied on elsewhere as drawn from currently tracked files.
+ *   - The actual cost of not following is real and was measured directly:
+ *     `commitsTouchingSince` on a file's new path only sees commits after
+ *     the rename (2 of 4 in the test fixture) — the pre-rename history is
+ *     invisible unless the caller already knows the file's old name.
+ *     kontext currently accepts that gap rather than take on a feature that
+ *     cannot serve its primary (multi-path) call shape and would make
+ *     single-path and multi-path evidence inconsistent in exactly the way
+ *     this comment used to wave away instead of measure.
+ *   - What *would* close the gap — detecting that a `describes` glob's
+ *     subject moved to a new location, e.g. via `-M` similarity on a normal
+ *     (non-`--follow`) `git log` across the whole repo — is a materially
+ *     different feature (it changes glob resolution, not commit counting)
+ *     and is tracked as its own open question in docs/SPEC.md rather than
+ *     folded in here.
  */
 export function lastCommitForPath(root: string, relPath: string): GitCommitInfo | null {
   if (typeof relPath !== 'string' || relPath.trim().length === 0) return null;
