@@ -12,7 +12,7 @@
 <p align="center">
   <a href="https://www.npmjs.com/package/@patkusch/kontext"><img src="https://img.shields.io/npm/v/@patkusch/kontext?style=flat-square&color=cb3837&label=npm" alt="npm"></a>
   <a href="https://github.com/patkusch/kontext/actions/workflows/ci.yml"><img src="https://github.com/patkusch/kontext/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <img src="https://img.shields.io/badge/tests-34-brightgreen?style=flat-square" alt="34 tests">
+  <img src="https://img.shields.io/badge/tests-53-brightgreen?style=flat-square" alt="53 tests">
   <img src="https://img.shields.io/badge/runtime%20deps-1-blue?style=flat-square" alt="One runtime dependency">
   <a href="./LICENSE"><img src="https://img.shields.io/badge/licence-MIT-green?style=flat-square" alt="MIT"></a>
 </p>
@@ -189,11 +189,30 @@ the set of things that must keep working.
 | ○ | `stale` | Code moved materially after the doc — **don't trust it blind** |
 | ⏱ | `expired` | Past its `expires` / `ttlDays` |
 | ↪ | `superseded` | Another doc declares it replaced |
-| ⊘ | `orphaned` | `describes` matches no files — the subject is gone |
+| ⊘ | `orphaned` | `describes` matches no files — the subject is gone or moved |
 | · | `unverified` | No `describes` — no claim to check |
 
 `unverified` isn't a failure. Most docs in most repos start there. It marks *absence of
 evidence*, and the honest thing to do with that is say so.
+
+**When a folder moves.** Say a doc describes `src/auth/**` and the team moves that folder
+to `src/identity/**`. The glob now matches nothing, so the doc reads as `orphaned`. kontext
+asks git where the files went, and says so:
+
+```
+ ⊘  docs/auth.md   10  1 dead glob
+     · `src/auth/**` matches nothing now, but it used to match 4 files (the last
+       of them left in 65fa565 'move auth to identity', 79 days ago). 4 of 4 now
+       appear at `src/identity/**` (git matched them by content; the weakest
+       match is 98% identical). Update `describes` to `src/identity/**` if that
+       is where this doc's subject lives.
+```
+
+That is a suggestion. kontext never edits your doc, and the doc stays `orphaned` until you do.
+It only suggests a new glob when more than half of the files moved to one place (3 of 4,
+not 2 of 4). Git decides what counts as the same file, at 50% alike or more. If files were
+moved and heavily rewritten in one commit, kontext says it cannot tell instead of guessing.
+Move first and edit in a second commit, and git can follow it.
 
 **Age is not staleness.** A 2019 ADR explaining why you rejected microservices is still
 true — its subject is a historical decision, and history doesn't drift. A runbook from
@@ -343,8 +362,9 @@ All commands support `--json`.
 Early. v0.1. The core mechanism — git-provable drift — is the part I'm confident in.
 The ranking heuristics and conflict detection are where feedback would help most.
 
-The [open questions](docs/SPEC.md#9-open-questions) are genuinely open: rename tracking
-across refactors, monorepo scoping, section-level staleness, cross-repo context.
+The [open questions](docs/SPEC.md#9-open-questions-and-one-that-was-closed) are genuinely
+open: monorepo scoping, section-level staleness, cross-repo context. Rename tracking is
+closed: a folder that moves is found and suggested, and the reasoning is written down.
 
 ## License
 

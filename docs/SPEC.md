@@ -189,7 +189,7 @@ Every document resolves to exactly one verdict. Where several apply, the most se
 | `stale` | Code moved materially after the doc | **Do not trust without checking** |
 | `expired` | Past `expires` / `ttlDays` | Re-confirm or delete |
 | `superseded` | Another doc declares it replaced | Read the successor |
-| `orphaned` | `describes` matches no files | The subject is gone; the doc probably should be too |
+| `orphaned` | `describes` matches no files | The subject is gone or moved. If git can show where it went, the finding says so (§9) |
 | `unverified` | No `describes` — no claim to check | Unknown. Add `describes` to find out |
 
 `unverified` is deliberately not a failure state. Most documents in most repositories
@@ -292,25 +292,10 @@ a handoff.
 
 ---
 
-## 9. Open questions
+## 9. Open questions, and one that was closed
 
-Genuinely unresolved, and feedback is welcome:
+Still unresolved, and feedback is welcome:
 
-- **Rename tracking.** Resolved for per-file history: `git log --follow` is deliberately
-  not wired into `src/core/git.ts`, on measured evidence rather than a guess (see
-  `test/git-rename.test.js` and the comment on `lastCommitForPath`). It hard-requires a
-  single pathspec, but every evidence function here takes a path *list* because a
-  `describes` glob routinely resolves to more than one file — that's the common case,
-  not an edge case — so `--follow` could only ever help the minority of docs with a
-  single-file `describes`, and even then its output mixes old and new filenames in a way
-  that would leak a since-renamed path into evidence documented as "currently tracked
-  files." Still open: glob-level rename detection across a refactor, which is a different
-  problem (relocating a doc's *subject*, not counting a file's commits) — a doc whose
-  subject moved from `src/auth/` to `src/identity/` currently reads as `orphaned`, which
-  is technically true and practically annoying. The likeliest fix there is `-M`
-  similarity on a normal, non-`--follow` `git log` across the whole repo (which doesn't
-  share `--follow`'s single-path limit), used to propose an updated `describes` glob —
-  not yet built.
 - **Monorepos.** Should drift be scoped per-package? A commit in `packages/ui` probably
   should not drift a doc describing `packages/api`, but the glob already expresses that.
   Unclear whether anything more is needed.
@@ -319,6 +304,82 @@ Genuinely unresolved, and feedback is welcome:
 - **Cross-repo context.** Organisational knowledge spans repositories. Git drift assumes
   one history. The obvious extension is a federated index; the obvious cost is that it
   stops being a zero-config tool.
+
+### Decided: rename tracking
+
+This one had two halves, and both are now settled.
+
+**One file's history: not built, on evidence.** `git log --follow` is deliberately not
+used in `src/core/git.ts`. It accepts only one path, and a `describes` glob usually
+matches several files. Even for one file, its output mixes the old and new names, so a
+path that no longer exists would leak into the list of changed files. The cost is real
+and measured: after a file is renamed, commits from before the rename are not counted
+against its new path (2 of 4 in the test fixture). `test/git-rename.test.js` rebuilds
+that measurement so anyone can rerun it.
+
+**A doc's whole subject folder moves: built.** A doc says `describes: src/auth/**` and
+the team moves the folder to `src/identity/**`. The glob now matches nothing, so the doc
+reads as `orphaned`. That is true but unhelpful, so kontext now says where the files
+went. It adds one finding under the `orphaned` verdict:
+
+```
+⊘ orphaned  docs/auth.md
+  └ `src/auth/**` matches nothing now, but it used to match 4 files (the last of
+    them left in 65fa565 'move auth to identity', 79 days ago). 4 of 4 now appear
+    at `src/identity/**` (git matched them by content; the weakest match is 98%
+    identical). Update `describes` to `src/identity/**` if that is where this
+    doc's subject lives.
+```
+
+How it decides, and why each choice:
+
+- **Git does the matching, not kontext.** Git calls two files "the same file" when they
+  are at least 50% alike (its default rename bar). Files below that show up as a delete
+  plus an add, and kontext reports them as "cannot tell". It never matches by file name,
+  because two files with the same name in a new folder can be unrelated.
+- **It compares two endpoints, not every commit in between.** The starting point is the
+  last commit where the glob still matched. The end point is the working tree. A folder
+  that moved twice therefore still resolves to where it is now (`src/auth` to
+  `src/identity` to `src/iam` gives `src/iam/**`).
+- **It suggests a new glob only when more than half the files agree.** That means more
+  than half moved to one place with the same layout underneath (3 of 4 files, not 2 of
+  4). Below that, a suggestion would describe a minority of the old subject, so the
+  finding lists what git could link and says it cannot tell.
+- **Files that were deleted are not guessed at.** If some files have no match, the
+  finding says they may have been deleted. It does not say they were.
+- **A broader new glob is flagged.** If `src/identity/**` also matches files that were
+  already there, the finding says how many. The new glob would then cover more than the
+  old one did.
+- **A glob that never matched is left alone.** A typo, or a doc written ahead of the
+  code, is not a move, so nothing is invented and the output is what it was before.
+- **It is a suggestion, never an edit.** kontext does not rewrite `describes`. The
+  verdict stays `orphaned`, the score is unchanged, and CI still fails until a person
+  updates the doc, which is the point of the gate. `kontext check --fix-hints` names the
+  exact change, and `kontext doctor` raises it as its own finding.
+- **It also works for a move that is not committed yet.** A `git mv` that is staged but
+  not committed is found, and the finding says it is not committed.
+
+**Staleness is deliberately not changed.** The experiment is in
+`test/git-rename.test.js`. Adding the old paths to the commit count does recover the
+commits from before the move (2 instead of 1 in the fixture). But it would put a path
+that no longer exists into the list of changed files, which is meant to hold only
+tracked files. It would also change nothing that matters: a doc whose glob matches
+nothing is already `orphaned`, the worst verdict that applies, so more history cannot
+make it worse. Once someone updates `describes`, the ordinary calculation runs on the
+new location, where history starts at the move. Editing the doc also restarts its age,
+so the fix hint tells the reader to check the doc against the moved code first.
+
+Known limits, stated plainly:
+
+- **Move first, edit after.** A commit that moves files and also rewrites most of them
+  cannot be traced by anyone, git included. Two commits (move, then edit) can.
+- **Very large refactors.** Git stops looking for renames when too many files changed at
+  once. kontext raises git's limit from 1,000 files to 5,000. Past that it says "cannot
+  tell".
+- **Files removed only inside a merge commit** are not seen by the history walk.
+- **Shallow clones** hide the history this needs, exactly as they do for staleness. CI
+  needs `fetch-depth: 0`. With no history, the glob reads as "never matched" and the
+  output is what it was before.
 
 ---
 

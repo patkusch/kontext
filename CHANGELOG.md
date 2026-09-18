@@ -11,6 +11,22 @@ called out here under **Changed**, with what it does to documents already in the
 
 ## [Unreleased]
 
+### Added
+
+- **A moved folder is now found.** When a doc's `describes` glob matches nothing but used
+  to, kontext asks git where those files went and adds one finding under the `orphaned`
+  verdict, for example: update `describes` from `src/auth/**` to `src/identity/**`.
+  It only suggests a new glob when more than half of the files moved to one place, and
+  says "cannot tell" when git cannot link them. `check --fix-hints` names the change and
+  `doctor` raises it as its own finding.
+- `DriftEvidence.relocations` in the JSON output carries the same evidence for tools.
+
+### Unchanged on purpose
+
+- Verdicts, scores and commit counts. kontext suggests the new glob; it does not edit
+  the doc, and it does not add the old paths to the staleness count. The reasoning is in
+  [`docs/SPEC.md`](docs/SPEC.md#decided-rename-tracking).
+
 ## [0.1.0] — 2026-09-01
 
 First published release. Everything below already existed in the repository; this is
