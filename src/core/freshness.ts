@@ -24,11 +24,13 @@ import {
   type FreshnessReport,
   type GitCommitInfo,
   type KontextConfig,
+  type Relocation,
   type VerifyResult,
 } from '../types.js';
 
 import {
   commitsTouchingSince,
+  findRelocation,
   isGitRepo,
   lastCommitForFiles,
   lastCommitForPath,
@@ -170,10 +172,17 @@ interface RunCache {
   filesCommit: Map<string, GitCommitInfo | null>;
   since: Map<string, { count: number; files: string[] }>;
   globs: Map<string, { matched: string[]; missingGlobs: string[] }>;
+  relocation: Map<string, Relocation | null>;
 }
 
 function newRunCache(): RunCache {
-  return { docCommit: new Map(), filesCommit: new Map(), since: new Map(), globs: new Map() };
+  return {
+    docCommit: new Map(),
+    filesCommit: new Map(),
+    since: new Map(),
+    globs: new Map(),
+    relocation: new Map(),
+  };
 }
 
 /** id -> paths of docs that declare `supersedes: [id]`. */
@@ -271,6 +280,75 @@ function cachedGlobs(
   }
   cache.globs.set(key, value);
   return value;
+}
+
+/**
+ * Where a dead glob's files went, per glob. Only ever asked about a glob that
+ * already matched nothing, so a healthy repo never pays for it.
+ */
+function cachedRelocations(
+  root: string,
+  missingGlobs: string[],
+  allFiles: string[],
+  cache: RunCache,
+): Relocation[] {
+  const found: Relocation[] = [];
+  for (const glob of missingGlobs) {
+    let value = cache.relocation.get(glob);
+    if (value === undefined) {
+      try {
+        value = findRelocation(root, glob, allFiles);
+      } catch {
+        value = null;
+      }
+      cache.relocation.set(glob, value);
+    }
+    if (value !== null) found.push(value);
+  }
+  return found;
+}
+
+/**
+ * The plain-English finding for one dead glob. It states what git showed, says
+ * how sure that is, and only then suggests a fix; it never claims more than the
+ * evidence carries.
+ */
+function relocationReason(r: Relocation, nowMs: number): string {
+  const left = r.leftIn
+    ? `the last of them left in ${describeCommit(r.leftIn, nowMs)}`
+    : `they are moved in the working tree but not committed yet`;
+  const used =
+    `\`${r.glob}\` matches nothing now, but it used to match ${r.fileCount} ${plural(r.fileCount, 'file')} ` +
+    `(${left}).`;
+
+  if (r.suggestedGlob === null) {
+    const unlinked = r.fileCount - r.linkedCount;
+    const link =
+      r.linkedCount === 0
+        ? 'Git cannot link any of them to a file that exists now, so they were either deleted or ' +
+          'rewritten too much to recognise.'
+        : `Git links only ${r.linkedCount} of them to files that exist now, which is not enough to name ` +
+          `one new home, and the other ${unlinked} were either deleted or rewritten too much to recognise.`;
+    return `${used} ${link} kontext cannot tell which, so it suggests no new \`describes\`.`;
+  }
+
+  const alike =
+    r.lowestSimilarity === null
+      ? ''
+      : ` (git matched them by content; the weakest match is ${r.lowestSimilarity}% identical)`;
+  const rest = r.fileCount - r.movedCount;
+  const others =
+    rest > 0
+      ? ` The other ${rest} ${plural(rest, 'file')} could not be linked and may have been deleted.`
+      : '';
+  const broader =
+    r.extraMatches > 0
+      ? ` Note: \`${r.suggestedGlob}\` also matches ${r.extraMatches} ${plural(r.extraMatches, 'file')} that were not part of the move.`
+      : '';
+  return (
+    `${used} ${r.movedCount} of ${r.fileCount} now appear at \`${r.suggestedGlob}\`${alike}.${others}` +
+    `${broader} Update \`describes\` to \`${r.suggestedGlob}\` if that is where this doc's subject lives.`
+  );
 }
 
 /* -------------------------------------------------------------------------- */
@@ -375,6 +453,11 @@ function assessDocInternal(
   } else {
     const { matched, missingGlobs } = cachedGlobs(root, describes, allFiles, cache);
 
+    // Ask history where any dead glob's files went. This only ever adds a
+    // finding: the verdict, the score and the evidence counts below are
+    // computed exactly as before.
+    const relocations = cachedRelocations(root, missingGlobs, allFiles, cache);
+
     if (matched.length === 0) {
       // The subject of the doc is gone: deleted, renamed, or moved out from
       // under it. The doc has outlived the thing it was written about.
@@ -386,6 +469,7 @@ function assessDocInternal(
         changedFiles: [],
         matchedFileCount: 0,
         missingGlobs,
+        ...(relocations.length > 0 ? { relocations } : {}),
       };
       verdicts.push({
         freshness: 'orphaned',
@@ -396,6 +480,7 @@ function assessDocInternal(
           `${plural(describes.length, 'matches', 'match')} zero tracked files — the code this doc ` +
           `describes was deleted, renamed, or moved`,
       );
+      for (const relocation of relocations) reasons.push(relocationReason(relocation, nowMs));
     } else if (docCommitMs === null || docCommit === null) {
       // The doc itself is untracked or newly added, so there is no "since"
       // to measure drift from. Honest answer: unverified, not fresh.
@@ -442,6 +527,7 @@ function assessDocInternal(
         changedFiles: since.files.slice(0, MAX_CHANGED_FILES),
         matchedFileCount: matched.length,
         missingGlobs,
+        ...(relocations.length > 0 ? { relocations } : {}),
       };
 
       // Threshold ladder. `staleCommitCount` is an independent trigger: a burst
@@ -469,6 +555,7 @@ function assessDocInternal(
             `${plural(missingGlobs.length, 'matches', 'match')} no files (${joinSample(missingGlobs)}) — ` +
             `score reduced ${Math.round(50 * missingRatio)}%`,
         );
+        for (const relocation of relocations) reasons.push(relocationReason(relocation, nowMs));
       }
 
       verdicts.push({ freshness: verdict, score });

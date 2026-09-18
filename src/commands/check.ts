@@ -86,6 +86,11 @@ export function fixHint(r: FreshnessReport): string {
       return `add \`describes\` frontmatter to ${path} naming the source globs it claims to explain — until then staleness is unprovable`;
     case 'orphaned': {
       const dead = r.drift?.missingGlobs ?? describes;
+      const moves = (r.drift?.relocations ?? []).filter((m) => m.suggestedGlob !== null);
+      if (moves.length > 0) {
+        const swaps = moves.map((m) => `\`${m.glob}\` to \`${m.suggestedGlob}\``).join(', ');
+        return `git found where the code went — change \`describes\` from ${swaps} (updating the doc restarts its age clock, so read it against the moved code first)`;
+      }
       return `\`describes\` matches no files (${dead.join(', ') || 'no globs resolve'}) — repoint it at where that code moved, or delete the doc`;
     }
     case 'expired':

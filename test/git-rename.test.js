@@ -213,3 +213,338 @@ test('experiment: --follow -M does bridge the rename for a single resolved path'
   assert.match(out, /src\/auth\/session\.js/, 'the old path appears in --follow output');
   assert.match(out, /src\/identity\/session\.js/, 'as does the new path');
 });
+
+/* ------------------------------------------------------------------------ *
+ * Glob-level relocation: a doc's whole subject folder moves.
+ *
+ * Everything above is about one file's history. This half is the other
+ * problem: `describes: src/auth/**` and the team moves the folder to
+ * `src/identity/**`. The glob then matches nothing. kontext's job is to say
+ * where the files went, when git can prove it, and to say "cannot tell" when
+ * it cannot. Every fixture here is a real repo; nothing is mocked.
+ * ------------------------------------------------------------------------ */
+
+import { spawnSync } from 'node:child_process';
+import { renameSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
+import { findRelocation, listTrackedFiles } from '../dist/core/git.js';
+
+const CLI = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
+const NAMES = ['session', 'token', 'cookies', 'csrf'];
+
+/** 16 distinct lines per file, so a small edit stays far above git's 50% bar. */
+function moduleSource(name, edit = '') {
+  const lines = [`// ${name} module`];
+  for (let i = 1; i <= 14; i += 1) lines.push(`export function ${name}Fn${i}(x) { return x + ${i}; }`);
+  if (edit) lines.push(edit);
+  return `${lines.join('\n')}\n`;
+}
+
+/** A total rewrite: nothing in common with moduleSource, so git sees delete + add. */
+function rewrittenSource(name) {
+  const lines = [`# entirely different ${name}`];
+  for (let i = 1; i <= 14; i += 1) lines.push(`const ${name}Value${i} = new Map([['k${i}', "${name}-${i * 7919}"]]);`);
+  return `${lines.join('\n')}\n`;
+}
+
+function docSource(describes) {
+  const list = describes.map((g) => `  - ${g}`).join('\n');
+  return `---\nkontext: 1\nid: auth-flow\nkind: guide\ndescribes:\n${list}\n---\n# Auth flow\n\nHow sessions work.\n`;
+}
+
+/** Four files under src/auth and a doc that describes them, with real history. */
+function makeFolderRepo(describes = ['src/auth/**']) {
+  const dir = mkdtempSync(join(tmpdir(), 'kontext-reloc-'));
+  git(dir, 'init', '-q');
+  git(dir, 'config', 'user.name', 'test');
+  git(dir, 'config', 'user.email', 'test@example.com');
+  git(dir, 'config', 'commit.gpgsign', 'false');
+  mkdirSync(join(dir, 'src', 'auth'), { recursive: true });
+  mkdirSync(join(dir, 'docs'), { recursive: true });
+  for (const name of NAMES) writeFileSync(join(dir, 'src', 'auth', `${name}.js`), moduleSource(name));
+  writeFileSync(join(dir, 'docs', 'auth.md'), docSource(describes));
+  commitAt(dir, 'initial: code and doc together', '2025-01-01T00:00:00Z');
+  writeFileSync(join(dir, 'src', 'auth', 'session.js'), moduleSource('session', '// tweak'));
+  commitAt(dir, 'session tweak', '2025-02-01T00:00:00Z');
+  return dir;
+}
+
+/** `git mv src/auth src/identity` plus a one-line edit to each moved file. */
+function moveFolder(dir, { to = 'identity', names = NAMES } = {}) {
+  mkdirSync(join(dir, 'src', to), { recursive: true });
+  for (const name of names) {
+    git(dir, 'mv', `src/auth/${name}.js`, `src/${to}/${name}.js`);
+    writeFileSync(join(dir, 'src', to, `${name}.js`), moduleSource(name, '// moved'));
+  }
+}
+
+function kontext(dir, ...args) {
+  const result = spawnSync(process.execPath, [CLI, ...args], {
+    cwd: dir,
+    encoding: 'utf8',
+    env: { ...process.env, NO_COLOR: '1' },
+  });
+  return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+}
+
+function checkDoc(dir) {
+  const result = kontext(dir, 'check', '--json');
+  return JSON.parse(result.stdout).docs.find((d) => d.path === 'docs/auth.md');
+}
+
+test('relocation: a whole folder moved with small edits is found, and the doc is told the new glob', (t) => {
+  const dir = makeFolderRepo();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  moveFolder(dir);
+  commitAt(dir, 'move auth to identity', '2025-03-01T00:00:00Z');
+
+  const doc = checkDoc(dir);
+  // The verdict is unchanged: the glob as written still matches nothing, so
+  // the doc is still orphaned and CI still fails until someone edits it.
+  assert.equal(doc.freshness, 'orphaned');
+  assert.deepEqual(doc.drift.missingGlobs, ['src/auth/**']);
+
+  const [relocation] = doc.drift.relocations;
+  assert.equal(relocation.glob, 'src/auth/**');
+  assert.equal(relocation.suggestedGlob, 'src/identity/**');
+  assert.equal(relocation.fileCount, 4);
+  assert.equal(relocation.movedCount, 4);
+  assert.equal(relocation.extraMatches, 0);
+  assert.equal(relocation.leftIn.subject, 'move auth to identity');
+  assert.ok(relocation.lowestSimilarity >= 90, 'one added line in ~16 is a near-identical file');
+
+  const finding = doc.reasons.find((r) => r.includes('used to match'));
+  assert.match(finding, /`src\/auth\/\*\*` matches nothing now, but it used to match 4 files/);
+  assert.match(finding, /4 of 4 now appear at `src\/identity\/\*\*`/);
+  assert.match(finding, /Update `describes` to `src\/identity\/\*\*`/);
+  assert.match(doc.hint, /from `src\/auth\/\*\*` to `src\/identity\/\*\*`/);
+
+  // doctor raises it as its own finding instead of burying it in "N docs are orphaned".
+  const doctor = JSON.parse(kontext(dir, 'doctor', '--json').stdout);
+  assert.ok(doctor.findings.some((f) => /describe code that has moved/.test(f.title)));
+});
+
+test('relocation: some files moved, one deleted, is still reported with the honest count', (t) => {
+  const dir = makeFolderRepo();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  moveFolder(dir, { names: ['session', 'token', 'cookies'] });
+  git(dir, 'rm', '-q', 'src/auth/csrf.js');
+  commitAt(dir, 'move most of auth, drop csrf', '2025-03-01T00:00:00Z');
+
+  const [relocation] = checkDoc(dir).drift.relocations;
+  assert.equal(relocation.suggestedGlob, 'src/identity/**');
+  assert.equal(relocation.fileCount, 4);
+  assert.equal(relocation.movedCount, 3);
+  assert.equal(relocation.linkedCount, 3);
+
+  const finding = checkDoc(dir).reasons.find((r) => r.includes('used to match'));
+  assert.match(finding, /3 of 4 now appear at/);
+  assert.match(finding, /The other 1 file could not be linked and may have been deleted/);
+});
+
+test('relocation: moved and rewritten below git\'s similarity bar says "cannot tell" and names no new folder', (t) => {
+  const dir = makeFolderRepo();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(join(dir, 'src', 'identity'), { recursive: true });
+  for (const name of NAMES) {
+    git(dir, 'rm', '-q', `src/auth/${name}.js`);
+    // Same file names in the new folder, but nothing in common with the old content.
+    writeFileSync(join(dir, 'src', 'identity', `${name}.js`), rewrittenSource(name));
+  }
+  commitAt(dir, 'replace the auth code', '2025-03-01T00:00:00Z');
+
+  // Sanity: git really does see these as delete + add, not renames.
+  const status = git(dir, 'log', '-1', '-M', '--name-status', '--pretty=format:');
+  assert.doesNotMatch(status, /^R/m);
+
+  const doc = checkDoc(dir);
+  assert.equal(doc.freshness, 'orphaned');
+  const [relocation] = doc.drift.relocations;
+  assert.equal(relocation.suggestedGlob, null);
+  assert.equal(relocation.linkedCount, 0);
+  assert.equal(relocation.movedCount, 0);
+
+  const finding = doc.reasons.find((r) => r.includes('used to match'));
+  assert.match(finding, /kontext cannot tell which/);
+  assert.match(finding, /suggests no new `describes`/);
+  // The point of the test: same file names in a new folder are tempting, and are a guess.
+  assert.doesNotMatch(finding, /identity/);
+  assert.doesNotMatch(doc.hint, /identity/);
+});
+
+test('relocation: too few files linked to name a new home is also "cannot tell"', (t) => {
+  const dir = makeFolderRepo();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  // One file moves cleanly; three are rewritten from scratch elsewhere.
+  moveFolder(dir, { names: ['session'] });
+  for (const name of ['token', 'cookies', 'csrf']) {
+    git(dir, 'rm', '-q', `src/auth/${name}.js`);
+    writeFileSync(join(dir, 'src', 'identity', `${name}.js`), rewrittenSource(name));
+  }
+  commitAt(dir, 'move session, rewrite the rest', '2025-03-01T00:00:00Z');
+
+  const [relocation] = checkDoc(dir).drift.relocations;
+  assert.equal(relocation.linkedCount, 1);
+  assert.equal(relocation.suggestedGlob, null, '1 of 4 is not more than half');
+  const finding = checkDoc(dir).reasons.find((r) => r.includes('used to match'));
+  assert.match(finding, /links only 1 of them/);
+});
+
+test('relocation: files split across two new folders are reported but not collapsed into one glob', (t) => {
+  const dir = makeFolderRepo();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  moveFolder(dir, { to: 'identity', names: ['session', 'token'] });
+  moveFolder(dir, { to: 'web', names: ['cookies', 'csrf'] });
+  commitAt(dir, 'split auth in two', '2025-03-01T00:00:00Z');
+
+  const [relocation] = checkDoc(dir).drift.relocations;
+  assert.equal(relocation.linkedCount, 4, 'git links all four');
+  assert.equal(relocation.suggestedGlob, null, 'but 2 and 2 is no single new home');
+});
+
+test('relocation: no move at all leaves today\'s behaviour untouched', (t) => {
+  const dir = makeFolderRepo();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+
+  const doc = checkDoc(dir);
+  assert.notEqual(doc.freshness, 'orphaned');
+  assert.equal(doc.drift.relocations, undefined);
+  assert.deepEqual(doc.drift.missingGlobs, []);
+  assert.ok(!doc.reasons.some((r) => r.includes('used to match')));
+});
+
+test('relocation: a glob that never matched anything does not invent a move', (t) => {
+  const dir = makeFolderRepo(['src/payments/**']);
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  // Even with a busy history and a rename elsewhere in the repo.
+  moveFolder(dir);
+  commitAt(dir, 'move auth to identity', '2025-03-01T00:00:00Z');
+
+  const doc = checkDoc(dir);
+  assert.equal(doc.freshness, 'orphaned');
+  assert.equal(doc.drift.relocations, undefined);
+  assert.equal(findRelocation(dir, 'src/payments/**', listTrackedFiles(dir)), null);
+  assert.equal(doc.reasons.length, 1, 'exactly the orphaned line it had before, nothing added');
+});
+
+test('relocation: a folder that was simply deleted says it cannot tell, and links nothing', (t) => {
+  const dir = makeFolderRepo();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  git(dir, 'rm', '-rq', 'src/auth');
+  mkdirSync(join(dir, 'src'), { recursive: true });
+  writeFileSync(join(dir, 'src', 'unrelated.js'), rewrittenSource('unrelated'));
+  commitAt(dir, 'delete auth', '2025-03-01T00:00:00Z');
+
+  const [relocation] = checkDoc(dir).drift.relocations;
+  assert.equal(relocation.fileCount, 4);
+  assert.equal(relocation.linkedCount, 0);
+  assert.equal(relocation.suggestedGlob, null);
+});
+
+test('relocation: a move that is staged but not committed yet is found and says so', (t) => {
+  const dir = makeFolderRepo();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  moveFolder(dir);
+  git(dir, 'add', '-A'); // no commit
+
+  const [relocation] = checkDoc(dir).drift.relocations;
+  assert.equal(relocation.leftIn, null);
+  assert.equal(relocation.suggestedGlob, 'src/identity/**');
+  const finding = checkDoc(dir).reasons.find((r) => r.includes('used to match'));
+  assert.match(finding, /moved in the working tree but not committed yet/);
+});
+
+test('relocation: a folder moved twice is followed to where it ended up', (t) => {
+  const dir = makeFolderRepo();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  moveFolder(dir);
+  commitAt(dir, 'move auth to identity', '2025-03-01T00:00:00Z');
+  renameSync(join(dir, 'src', 'identity'), join(dir, 'src', 'iam'));
+  git(dir, 'add', '-A');
+  commitAt(dir, 'rename identity to iam', '2025-04-01T00:00:00Z');
+
+  const [relocation] = checkDoc(dir).drift.relocations;
+  assert.equal(relocation.suggestedGlob, 'src/iam/**');
+  assert.equal(relocation.movedCount, 4);
+});
+
+test('relocation: a suggested glob that also matches files that were already there says so', (t) => {
+  const dir = makeFolderRepo();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(join(dir, 'src', 'identity'), { recursive: true });
+  writeFileSync(join(dir, 'src', 'identity', 'already-here.js'), moduleSource('alreadyHere'));
+  writeFileSync(join(dir, 'src', 'identity', 'also-here.js'), moduleSource('alsoHere'));
+  commitAt(dir, 'unrelated identity code', '2025-02-15T00:00:00Z');
+  moveFolder(dir);
+  commitAt(dir, 'move auth to identity', '2025-03-01T00:00:00Z');
+
+  const [relocation] = checkDoc(dir).drift.relocations;
+  assert.equal(relocation.suggestedGlob, 'src/identity/**');
+  assert.equal(relocation.extraMatches, 2);
+  assert.match(
+    checkDoc(dir).reasons.find((r) => r.includes('used to match')),
+    /also matches 2 files that were not part of the move/,
+  );
+});
+
+test('relocation: one dead glob among live ones is reported and the verdict is computed as before', (t) => {
+  const dir = makeFolderRepo(['src/auth/**', 'docs/auth.md']);
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  moveFolder(dir);
+  commitAt(dir, 'move auth to identity', '2025-03-01T00:00:00Z');
+
+  const doc = checkDoc(dir);
+  assert.notEqual(doc.freshness, 'orphaned', 'docs/auth.md still matches, so the doc is not orphaned');
+  assert.deepEqual(doc.drift.missingGlobs, ['src/auth/**']);
+  assert.equal(doc.drift.relocations[0].suggestedGlob, 'src/identity/**');
+  assert.ok(doc.reasons.some((r) => r.includes('score reduced')), 'the old dead-glob penalty is still applied');
+});
+
+test('relocation: a literal file path is followed to its new path', (t) => {
+  const dir = makeFolderRepo(['src/auth/session.js']);
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  moveFolder(dir);
+  commitAt(dir, 'move auth to identity', '2025-03-01T00:00:00Z');
+
+  const [relocation] = checkDoc(dir).drift.relocations;
+  assert.equal(relocation.fileCount, 1);
+  assert.equal(relocation.suggestedGlob, 'src/identity/session.js');
+});
+
+test('relocation: nested layout under the glob is kept (src/auth/**/*.js becomes src/identity/**/*.js)', (t) => {
+  const dir = makeFolderRepo(['src/auth/**/*.js']);
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  moveFolder(dir);
+  commitAt(dir, 'move auth to identity', '2025-03-01T00:00:00Z');
+
+  const [relocation] = checkDoc(dir).drift.relocations;
+  assert.equal(relocation.suggestedGlob, 'src/identity/**/*.js');
+});
+
+test('experiment: feeding the relocated paths into staleness would leak old paths and is left out', (t) => {
+  const dir = makeFolderRepo();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  // Code changes after the doc, then the folder moves.
+  writeFileSync(join(dir, 'src', 'auth', 'token.js'), moduleSource('token', '// after doc'));
+  commitAt(dir, 'token change before the move', '2025-02-10T00:00:00Z');
+  moveFolder(dir);
+  commitAt(dir, 'move auth to identity', '2025-03-01T00:00:00Z');
+
+  const since = '2025-01-01T00:00:01Z';
+  const newOnly = commitsTouchingSince(dir, ['src/identity/token.js'], since);
+  const both = commitsTouchingSince(dir, ['src/auth/token.js', 'src/identity/token.js'], since);
+  // Joining old and new paths does recover the pre-move commit...
+  assert.equal(newOnly.count, 1);
+  assert.equal(both.count, 2);
+  // ...but only by putting a path that no longer exists into `files`, which is
+  // documented as a sample of currently tracked files. That, plus the fact that
+  // the verdict is already `orphaned` (the worst applicable one) whatever the
+  // count says, is why the counts are not touched. See docs/SPEC.md section 9.
+  assert.ok(both.files.includes('src/auth/token.js'));
+
+  const doc = checkDoc(dir);
+  assert.equal(doc.freshness, 'orphaned');
+  assert.equal(doc.drift.commitsSince, 0, 'staleness numbers are exactly what they were before this feature');
+  assert.equal(doc.drift.matchedFileCount, 0);
+});

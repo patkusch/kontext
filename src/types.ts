@@ -125,6 +125,36 @@ export interface DriftEvidence {
   matchedFileCount: number;
   /** Globs matching zero files — the doc's subject may have been deleted or moved. */
   missingGlobs: string[];
+  /**
+   * What git can say about where a dead glob's files went. One entry per dead
+   * glob that used to match something; absent when none did. A suggestion, never
+   * an edit: kontext does not rewrite a doc's `describes`.
+   */
+  relocations?: Relocation[];
+}
+
+/** What history says happened to the files a now-dead `describes` glob used to match. */
+export interface Relocation {
+  /** The dead glob, as written in the doc. */
+  glob: string;
+  /** How many files the glob matched just before it stopped matching. */
+  fileCount: number;
+  /** The commit in which the last of them left. Null when the move is not committed yet. */
+  leftIn: GitCommitInfo | null;
+  /** How many of those files git can link to a new path (by content similarity). */
+  linkedCount: number;
+  /** How many were linked to the one new place named in `suggestedGlob`. */
+  movedCount: number;
+  /**
+   * The glob to use instead. Set only when more than half of the files moved
+   * to one place with the same layout underneath; otherwise null and kontext
+   * says it cannot tell.
+   */
+  suggestedGlob: string | null;
+  /** Files already at the new place that were not part of the move. */
+  extraMatches: number;
+  /** How alike the least-alike linked pair is, in percent (git's own score). */
+  lowestSimilarity: number | null;
 }
 
 /** The result of running a doc's `verify` command. */

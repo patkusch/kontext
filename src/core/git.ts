@@ -21,7 +21,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { matchGlob } from '../util/glob.js';
-import type { GitCommitInfo } from '../types.js';
+import type { GitCommitInfo, Relocation } from '../types.js';
 
 /**
  * ASCII unit/record separators. Commit subjects contain newlines, pipes, tabs
@@ -80,12 +80,10 @@ export function isGitRepo(root: string): boolean {
  *     cannot serve its primary (multi-path) call shape and would make
  *     single-path and multi-path evidence inconsistent in exactly the way
  *     this comment used to wave away instead of measure.
- *   - What *would* close the gap — detecting that a `describes` glob's
- *     subject moved to a new location, e.g. via `-M` similarity on a normal
- *     (non-`--follow`) `git log` across the whole repo — is a materially
- *     different feature (it changes glob resolution, not commit counting)
- *     and is tracked as its own open question in docs/SPEC.md rather than
- *     folded in here.
+ *   - What closes the *finding* half of the gap is `findRelocation` below: it
+ *     detects that a `describes` glob's subject moved and suggests the new
+ *     glob. It deliberately does not feed the old paths back into this
+ *     function's commit counting — see docs/SPEC.md section 9 for why.
  */
 export function lastCommitForPath(root: string, relPath: string): GitCommitInfo | null {
   if (typeof relPath !== 'string' || relPath.trim().length === 0) return null;
@@ -207,6 +205,192 @@ export function resolveGlobs(
   }
 
   return { matched: [...matched].sort(), missingGlobs };
+}
+
+/**
+ * How many added and deleted files git will compare when looking for renames.
+ * Git's own default is 1000 and silently gives up beyond it; a bigger number
+ * keeps a large refactor from reading as "nothing moved".
+ *
+ * Whether two files count as the same file is git's call, not ours: the default
+ * `-M` bar is 50% alike. Below it git reports a delete plus an add, and so do
+ * we — kontext never links files by guesswork of its own.
+ */
+const RENAME_LIMIT = 5000;
+
+/**
+ * Where did the files that a now-dead `describes` glob used to match go?
+ *
+ * Returns null when the glob never matched anything in this repo's history (a
+ * typo or a plan, not a move — nothing to invent) or when git cannot answer.
+ * Otherwise returns what git can prove, and a `suggestedGlob` only when more
+ * than half of the files moved to one place with the same layout underneath.
+ *
+ * How it works, in three steps, all read-only:
+ *   1. Find the last time the glob matched. If files are still in HEAD's tree
+ *      the move is uncommitted (a `git mv` not yet committed) and HEAD is the
+ *      baseline. Otherwise the baseline is the parent of the newest commit that
+ *      deleted a matching file (`--no-renames`, so a moved-out file shows as a
+ *      deletion).
+ *   2. Ask git for `diff -M --name-status` from that baseline to the working
+ *      tree. Comparing two endpoints, not walking commits, means a folder that
+ *      moved twice still comes out as one old-path to final-path link.
+ *   3. Turn the links into a glob by swapping the glob's fixed leading folder
+ *      for the new one (`src/auth/**` becomes `src/identity/**`), and check the
+ *      result matches every file it claims.
+ */
+export function findRelocation(
+  root: string,
+  glob: string,
+  trackedFiles: string[],
+): Relocation | null {
+  const pattern = typeof glob === 'string' ? glob.trim() : '';
+  if (pattern.length === 0) return null;
+
+  // 1. The baseline: a tree in which the glob still matched something.
+  let leftIn: GitCommitInfo | null = null;
+  let base = 'HEAD';
+  let before = matchingFilesIn(root, 'HEAD', pattern);
+  if (before === null) return null;
+  if (before.length === 0) {
+    leftIn = lastCommitDeleting(root, pattern);
+    if (leftIn === null) return null; // never matched anything: no relocation to report
+    base = `${leftIn.sha}^`;
+    before = matchingFilesIn(root, base, pattern);
+    if (before === null || before.length === 0) return null;
+  }
+
+  // 2. What git says happened to each of them.
+  const diff = run(root, ['diff', '-M', `-l${RENAME_LIMIT}`, '--name-status', '-z', base, '--']);
+  if (diff === null) return null;
+  const renames = parseRenames(diff);
+  const tracked = new Set(trackedFiles);
+
+  const links: { from: string; to: string; similarity: number }[] = [];
+  for (const from of before) {
+    const link = renames.get(from);
+    if (link !== undefined && tracked.has(link.to)) links.push({ from, ...link });
+  }
+
+  // 3. The most common new home, expressed as a glob.
+  const { prefix, rest, literal } = splitGlob(pattern);
+  const homes = new Map<string, typeof links>();
+  for (const link of links) {
+    const tail = link.from.slice(prefix.length);
+    if (!link.to.endsWith(tail)) continue;
+    const home = link.to.slice(0, link.to.length - tail.length);
+    if (!literal && home.length > 0 && !home.endsWith('/')) continue;
+    if (`${home}${tail}` === link.from) continue;
+    const list = homes.get(home);
+    if (list) list.push(link);
+    else homes.set(home, [link]);
+  }
+
+  let best: { home: string; links: typeof links } | null = null;
+  let tied = false;
+  for (const [home, list] of homes) {
+    if (best === null || list.length > best.links.length) {
+      best = { home, links: list };
+      tied = false;
+    } else if (list.length === best.links.length) {
+      tied = true;
+    }
+  }
+
+  let suggestedGlob: string | null = null;
+  let extraMatches = 0;
+  if (best !== null && !tied && best.links.length * 2 > before.length) {
+    const candidate = literal ? best.home : `${best.home}${rest}`;
+    const claimed = new Set(best.links.map((link) => link.to));
+    const coversAll = [...claimed].every((path) => matchGlob(candidate, path));
+    if (coversAll && candidate !== pattern) {
+      suggestedGlob = candidate;
+      extraMatches = trackedFiles.filter(
+        (path) => matchGlob(candidate, path) && !claimed.has(path),
+      ).length;
+    }
+  }
+
+  const counted = suggestedGlob !== null && best !== null ? best.links : links;
+  return {
+    glob: pattern,
+    fileCount: before.length,
+    leftIn,
+    linkedCount: links.length,
+    movedCount: suggestedGlob !== null && best !== null ? best.links.length : 0,
+    suggestedGlob,
+    extraMatches,
+    lowestSimilarity: counted.length > 0 ? Math.min(...counted.map((l) => l.similarity)) : null,
+  };
+}
+
+/** Files in `rev`'s tree that `pattern` matches, or null if git cannot say. */
+function matchingFilesIn(root: string, rev: string, pattern: string): string[] | null {
+  const out = run(root, ['ls-tree', '-r', '-z', '--name-only', rev]);
+  if (out === null) return null;
+  return out.split('\0').filter((path) => path.length > 0 && matchGlob(pattern, path));
+}
+
+/** The newest commit that deleted (or moved away) a file the glob matches. */
+function lastCommitDeleting(root: string, pattern: string): GitCommitInfo | null {
+  const { prefix } = splitGlob(pattern);
+  const limit = prefix.replace(/\/$/, '');
+  const out = run(root, [
+    'log',
+    '--no-renames',
+    '--diff-filter=D',
+    '--name-only',
+    LOG_FORMAT,
+    ...(limit.length > 0 ? ['--', `:(literal)${limit}`] : []),
+  ]);
+  if (out === null) return null;
+  for (const commit of parseLog(out)) {
+    if (commit.files.some((file) => matchGlob(pattern, file))) return commit.info;
+  }
+  return null;
+}
+
+/** `diff --name-status -z` output to a map of old path to new path plus similarity. */
+function parseRenames(out: string): Map<string, { to: string; similarity: number }> {
+  const renames = new Map<string, { to: string; similarity: number }>();
+  const tokens = out.split('\0');
+  for (let i = 0; i < tokens.length; i += 1) {
+    const status = tokens[i] ?? '';
+    if (status.length === 0) continue;
+    if (status.startsWith('R') || status.startsWith('C')) {
+      const from = tokens[i + 1];
+      const to = tokens[i + 2];
+      i += 2;
+      if (status.startsWith('R') && from && to) {
+        renames.set(from, { to, similarity: Number(status.slice(1)) || 0 });
+      }
+    } else {
+      i += 1; // a single-path entry: skip its path
+    }
+  }
+  return renames;
+}
+
+/**
+ * Split a glob into its fixed leading folder and the rest. `src/auth/**` gives
+ * prefix `src/auth/` and rest `**`. A glob with no wildcard is a literal path:
+ * the prefix is the whole path.
+ */
+function splitGlob(pattern: string): { prefix: string; rest: string; literal: boolean } {
+  let g = pattern.replace(/\\/g, '/').replace(/\/{2,}/g, '/');
+  while (g.startsWith('./')) g = g.slice(2);
+  if (g.startsWith('/')) g = g.slice(1);
+  if (g.endsWith('/')) g = `${g}**`;
+
+  const segments = g.split('/');
+  const fixed: string[] = [];
+  for (const segment of segments) {
+    if (hasMagic(segment)) break;
+    fixed.push(segment);
+  }
+  if (fixed.length === segments.length) return { prefix: g, rest: '', literal: true };
+  const prefix = fixed.length === 0 ? '' : `${fixed.join('/')}/`;
+  return { prefix, rest: g.slice(prefix.length), literal: false };
 }
 
 /**

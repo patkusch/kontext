@@ -230,6 +230,17 @@ async function run(argv: string[]): Promise<number> {
     });
   }
 
+  const relocated = reports.filter((r) =>
+    (r.drift?.relocations ?? []).some((m) => m.suggestedGlob !== null),
+  ).length;
+  if (relocated > 0) {
+    findings.push({
+      severity: 'major',
+      title: `${relocated} doc(s) describe code that has moved to a new place`,
+      fix: 'Their `describes` globs match nothing, but git can show where the files went. Run `kontext check --fix-hints` to see the new glob for each, then update the doc.',
+    });
+  }
+
   if (!configExists) {
     findings.push({
       severity: 'minor',
