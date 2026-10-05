@@ -10,7 +10,6 @@
 </p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/@patkusch/kontext"><img src="https://img.shields.io/npm/v/@patkusch/kontext?style=flat-square&color=cb3837&label=npm" alt="npm"></a>
   <a href="https://github.com/patkusch/kontext/actions/workflows/ci.yml"><img src="https://github.com/patkusch/kontext/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <img src="https://img.shields.io/badge/tests-53-brightgreen?style=flat-square" alt="53 tests">
   <img src="https://img.shields.io/badge/runtime%20deps-1-blue?style=flat-square" alt="One runtime dependency">
@@ -77,24 +76,14 @@ checkable claim.
 
 ## Quickstart
 
-```bash
-npm install -g @patkusch/kontext
-```
-
-Or run it without installing anything:
-
-```bash
-npx @patkusch/kontext doctor
-```
-
-<details>
-<summary>From source instead — no build dependencies beyond TypeScript</summary>
+kontext is not on npm yet, so install it from source. You need Node 20 or newer and git.
 
 ```bash
 git clone https://github.com/patkusch/kontext.git && cd kontext && npm install && npm run build && npm link
 ```
 
-</details>
+`npm link` puts the `kontext` command on your PATH. If you would rather not link it,
+run `node /path/to/kontext/dist/cli.js` wherever the docs below say `kontext`.
 
 Then, in any repo you want to look at:
 
