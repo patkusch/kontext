@@ -1,0 +1,10 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "kontext"
+abstract: "Give your markdown a lifecycle. Prove which docs are stale with git, pack fresh context for AI agents, and hand off state between sessions."
+type: software
+authors:
+  - family-names: "Kusch"
+    given-names: "Patricia"
+repository-code: "https://github.com/patkusch/kontext"
+license: MIT
