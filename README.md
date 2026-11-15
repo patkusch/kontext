@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="https://github.com/patkusch/kontext/actions/workflows/ci.yml"><img src="https://github.com/patkusch/kontext/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <img src="https://img.shields.io/badge/tests-174-brightgreen?style=flat-square" alt="174 tests">
+  <img src="https://img.shields.io/badge/tests-192-brightgreen?style=flat-square" alt="192 tests">
   <img src="https://img.shields.io/badge/runtime%20deps-1-blue?style=flat-square" alt="One runtime dependency">
   <a href="./LICENSE"><img src="https://img.shields.io/badge/licence-MIT-green?style=flat-square" alt="MIT"></a>
 </p>
