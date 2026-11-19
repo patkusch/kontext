@@ -1,0 +1,12 @@
+# Keep line endings the same on every machine, and never touch binary files.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.vsdx binary
+*.xlsx binary
+*.woff2 binary
