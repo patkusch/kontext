@@ -358,3 +358,7 @@ closed: a folder that moves is found and suggested, and the reasoning is written
 ## License
 
 MIT © [patkusch](https://github.com/patkusch)
+
+---
+
+[Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md) · [Security policy](SECURITY.md)
